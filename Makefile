@@ -30,8 +30,22 @@ GPU_PREFIX_SERVER_ARGS ?=
 GPU_AWQ_OUTPUT ?= reports/gpu_awq
 QUALITY_OUTPUT ?= reports/quality_smoke
 QUALITY_MAX_TOKENS ?= 96
+HF_BENCH_OUTPUT ?= reports/hf_benchmark
+HF_BENCH_CONCURRENCY ?= $(GPU_BENCH_CONCURRENCY)
+HF_BENCH_REQUESTS ?= $(GPU_BENCH_REQUESTS)
+HF_BENCH_WARMUP ?= $(GPU_BENCH_WARMUP)
+HF_BENCH_RUNS ?= $(GPU_BENCH_RUNS)
+HF_BENCH_MAX_TOKENS ?= $(GPU_BENCH_MAX_TOKENS)
+HF_BENCH_DTYPE ?= auto
+HF_BENCH_DEVICE ?= cuda
+ATTN_PROBE_OUTPUT ?= reports/attention_kernel_probe
+ATTN_PROBE_SEQ_LENS ?= 128,256,512,1024
+ATTN_PROBE_BACKENDS ?= math flash mem_efficient
+ATTN_PROBE_DTYPE ?= fp16
+ATTN_PROBE_RUNS ?= 20
+ATTN_PROBE_WARMUP ?= 5
 
-.PHONY: check test compile benchmark benchmark-gpu benchmark-awq render-gpu-report compare-prefix-cache compare-awq quality-smoke quality-smoke-bf16 quality-smoke-awq compare-quality serve-api serve-vllm serve-vllm-awq bench stream-bench \
+.PHONY: check test compile benchmark benchmark-gpu benchmark-hf compare-hf-vllm attention-kernel-probe benchmark-awq render-gpu-report compare-prefix-cache compare-awq quality-smoke quality-smoke-bf16 quality-smoke-awq compare-quality serve-api serve-vllm serve-vllm-awq bench stream-bench \
 	benchmark-prefix-cache experiment-baseline experiment-scheduler experiment-kv-cache compose-up compose-down compose-logs
 
 check: compile test
@@ -91,6 +105,32 @@ benchmark-awq:
 		--experiment-variant "awq_int4" \
 		--server-args "--quantization awq" \
 		--output-dir $(GPU_AWQ_OUTPUT)
+
+benchmark-hf:
+	$(VLLM_PYTHON) scripts/hf_benchmark.py \
+		--model "$(MODEL_PATH)" \
+		--concurrency $(HF_BENCH_CONCURRENCY) \
+		--requests $(HF_BENCH_REQUESTS) \
+		--warmup $(HF_BENCH_WARMUP) \
+		--runs $(HF_BENCH_RUNS) \
+		--max-tokens $(HF_BENCH_MAX_TOKENS) \
+		--dtype $(HF_BENCH_DTYPE) \
+		--device $(HF_BENCH_DEVICE) \
+		--output-dir $(HF_BENCH_OUTPUT)
+
+compare-hf-vllm:
+	$(VLLM_PYTHON) scripts/compare_hf_vllm.py \
+		--hf reports/hf_benchmark \
+		--vllm reports/gpu_benchmark
+
+attention-kernel-probe:
+	$(VLLM_PYTHON) scripts/attention_kernel_probe.py \
+		--seq-lens $(ATTN_PROBE_SEQ_LENS) \
+		--backends $(ATTN_PROBE_BACKENDS) \
+		--dtype $(ATTN_PROBE_DTYPE) \
+		--warmup $(ATTN_PROBE_WARMUP) \
+		--runs $(ATTN_PROBE_RUNS) \
+		--output-dir $(ATTN_PROBE_OUTPUT)
 
 render-gpu-report:
 	$(VLLM_PYTHON) scripts/render_gpu_report.py --input-dir $(GPU_BENCH_OUTPUT)

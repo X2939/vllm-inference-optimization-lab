@@ -65,6 +65,8 @@ python3 -m benchmarks.runner
 | 实验 | 服务命令 | Benchmark / 对比命令 | 输出目录 | 目的 |
 |---|---|---|---|---|
 | BF16 baseline | `make serve-vllm` | `make benchmark-gpu` | `reports/gpu_benchmark/` | 真实流式 TTFT/TPOT/吞吐基线 |
+| HF PyTorch baseline | 无需服务 | `make benchmark-hf` + `make compare-hf-vllm` | `reports/hf_benchmark/`、`reports/hf_vs_vllm_comparison/` | 对比本地框架推理与 vLLM serving |
+| Attention Kernel Probe | 无需服务 | `make attention-kernel-probe` | `reports/attention_kernel_probe/` | 对比 PyTorch SDPA math/flash/mem-efficient 后端 |
 | Prefix Cache OFF/ON | `make serve-vllm SERVER_EXTRA_ARGS=...` | `make benchmark-prefix-cache` + `make compare-prefix-cache` | `reports/gpu_prefix_cache_*` | 验证 prefill 复用对 TTFT 的影响 |
 | AWQ INT4 | `make serve-vllm-awq` | `make benchmark-awq` + `make compare-awq` | `reports/gpu_awq/`、`reports/gpu_quantization_comparison/` | 对比量化后的吞吐、延迟和显存 |
 | Quality smoke | 使用对应服务 | `make quality-smoke-bf16` / `make quality-smoke-awq` / `make compare-quality` | `reports/quality_smoke_*` | 固定 prompt 回归，不作为正式准确率评测 |
@@ -102,6 +104,27 @@ make benchmark-gpu GPU_BENCH_CONCURRENCY=1,2,4,8 GPU_BENCH_REQUESTS=30 GPU_BENCH
 ```bash
 make render-gpu-report
 ```
+
+### HF PyTorch baseline
+
+为了避免只会讲一个 serving 框架，项目提供本地 Hugging Face Transformers baseline。它使用同一模型家族和同一 workload，在本地进程中做 greedy decode，输出与 vLLM benchmark 相同形状的 `metadata.json`、`summary.csv`、`requests.csv`、`REPORT.md` 和 PNG 图。
+
+```bash
+make benchmark-hf
+make compare-hf-vllm
+```
+
+解释边界必须说清楚：HF 的 `concurrency` 是本地 batch size；vLLM 的 `concurrency` 是多个客户端请求经过 OpenAI-compatible streaming endpoint。两者不是完全相同的传输层 A/B，但非常适合说明为什么在线推理需要 Scheduler、Continuous Batching、KV Cache block 管理和流式指标观测。更完整的 backend 分层见 [`docs/backend_boundary_study.md`](docs/backend_boundary_study.md)。
+
+### Attention Kernel Probe
+
+为了补充 GPU 底层视角，项目提供一个小型 PyTorch CUDA SDPA probe。它不实现自定义 CUDA kernel，而是在相同 Q/K/V shape 下强制选择 `math`、`flash`、`mem_efficient` 后端，记录 P50/P95 latency、峰值显存、数值误差和 backend 可用性。
+
+```bash
+make attention-kernel-probe
+```
+
+这部分用于连接 serving 指标和底层执行：TPOT、吞吐与 decode/prefill 计算路径相关，而 attention kernel 是否融合、是否避免 materialize 完整 attention matrix、是否减少 HBM traffic，都会影响实际性能。详细解释见 [`docs/gpu_operator_notes.md`](docs/gpu_operator_notes.md)。
 
 ### Prefix Cache A/B
 
@@ -316,6 +339,8 @@ physical block pool:     [3] ... [17] ... [42]
 - Scheduler 没有实现 preemption、swap、speculative decoding、LoRA-aware batching。
 - KV Cache 统计以 token block 为单位，没有按具体模型层数和 dtype 换算真实字节。
 - Chunked Prefill 已接入统一 token budget，但没有 vLLM 的 preemption、encoder budget、spec decode 和 cudagraph 约束。
+- HF baseline 是本地框架推理，`concurrency` 表示 batch size；vLLM benchmark 是真实 streaming 服务，两者用于理解 serving trade-off，不是完全同构的网络服务 A/B。
+- Attention Kernel Probe 使用 PyTorch SDPA 后端选择，不是自研 CUDA kernel 或完整 FlashAttention 实现。
 - ONNX / TensorRT 示例是简化模型，不等价于完整 LLM 图优化。
 - 单机单进程，没有 tensor parallel、pipeline parallel、data parallel 或多节点容错。
 - `reports/benchmark_suite` 的数据是机制回归基线；真实 GPU 结论必须重新压测。
