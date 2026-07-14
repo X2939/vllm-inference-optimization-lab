@@ -84,10 +84,6 @@ def dtype_from_name(torch_module: Any, value: str) -> Any:
 def sdpa_backend_context(torch_module: Any, backend: str) -> Iterator[None]:
     """Select one SDPA backend across PyTorch API variants."""
 
-    if backend == "auto":
-        yield
-        return
-
     if hasattr(torch_module.nn, "attention") and hasattr(
         torch_module.nn.attention, "sdpa_kernel"
     ):
@@ -96,7 +92,6 @@ def sdpa_backend_context(torch_module: Any, backend: str) -> Iterator[None]:
         backend_map = {
             "math": sdpa_backend.MATH,
             "flash": sdpa_backend.FLASH_ATTENTION,
-            "mem_efficient": sdpa_backend.EFFICIENT_ATTENTION,
         }
         with sdpa_kernel([backend_map[backend]]):
             yield
@@ -106,7 +101,7 @@ def sdpa_backend_context(torch_module: Any, backend: str) -> Iterator[None]:
         flags = {
             "enable_math": backend == "math",
             "enable_flash": backend == "flash",
-            "enable_mem_efficient": backend == "mem_efficient",
+            "enable_mem_efficient": False,
         }
         with torch_module.backends.cuda.sdp_kernel(**flags):
             yield
@@ -361,7 +356,6 @@ def write_report(path: Path, rows: list[dict[str, Any]], metadata_dict: dict[str
             "",
             "- `math` is the conservative reference path and is useful for numerical comparison.",
             "- `flash` attempts to use the fused FlashAttention-style SDPA kernel when the GPU, dtype and shape support it.",
-            "- `mem_efficient` is another fused/memory-efficient backend when available.",
             "- Lower latency usually comes from avoiding materializing the full attention matrix and reducing HBM traffic, but backend availability depends on CUDA, PyTorch, GPU architecture, dtype, head dimension and mask pattern.",
             "",
             "This result complements the vLLM benchmark: serving metrics such as TPOT and throughput are affected by scheduler and KV Cache behavior, but the decode/prefill compute path still depends on attention kernel efficiency.",
@@ -396,7 +390,7 @@ def main() -> None:
         description="Probe PyTorch CUDA SDPA attention backends."
     )
     parser.add_argument("--seq-lens", type=parse_csv_ints, default=[128, 256, 512, 1024])
-    parser.add_argument("--backends", nargs="+", default=["math", "flash", "mem_efficient"])
+    parser.add_argument("--backends", nargs="+", default=["math", "flash"])
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-heads", type=int, default=8)
     parser.add_argument("--head-dim", type=int, default=64)
@@ -409,7 +403,7 @@ def main() -> None:
     parser.add_argument("--output-dir", default="reports/attention_kernel_probe")
     args = parser.parse_args()
 
-    allowed = {"auto", "math", "flash", "mem_efficient"}
+    allowed = {"math", "flash"}
     invalid = sorted(set(args.backends) - allowed)
     if invalid:
         parser.error(f"unsupported backends: {', '.join(invalid)}")

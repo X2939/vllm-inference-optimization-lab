@@ -67,7 +67,7 @@ python3 -m benchmarks.runner
 |---|---|---|---|---|
 | BF16 baseline | `make serve-vllm` | `make benchmark-gpu` | `reports/gpu_benchmark/` | 真实流式 TTFT/TPOT/吞吐基线 |
 | HF PyTorch baseline | 无需服务 | `make benchmark-hf` + `make compare-hf-vllm` | `reports/hf_benchmark/`、`reports/hf_vs_vllm_comparison/` | 对比本地框架推理与 vLLM serving |
-| Attention Kernel Probe | 无需服务 | `make attention-kernel-probe` | `reports/attention_kernel_probe/` | 对比 PyTorch SDPA math/flash/mem-efficient 后端 |
+| Attention Kernel Probe | 无需服务 | `make attention-kernel-probe` | `reports/attention_kernel_probe/` | 对比 PyTorch SDPA math/flash 后端 |
 | Prefix Cache OFF/ON | `make serve-vllm SERVER_EXTRA_ARGS=...` | `make benchmark-prefix-cache` + `make compare-prefix-cache` | `reports/gpu_prefix_cache_*` | 验证 prefill 复用对 TTFT 的影响 |
 | AWQ INT4 | `make serve-vllm-awq` | `make benchmark-awq` + `make compare-awq` | `reports/gpu_awq/`、`reports/gpu_quantization_comparison/` | 对比量化后的吞吐、延迟和显存 |
 | Quality smoke | 使用对应服务 | `make quality-smoke-bf16` / `make quality-smoke-awq` / `make compare-quality` | `reports/quality_smoke_*` | 固定 prompt 回归，不作为正式准确率评测 |
@@ -119,13 +119,17 @@ make compare-hf-vllm
 
 ### Attention Kernel Probe
 
-为了补充 GPU 底层视角，项目提供一个小型 PyTorch CUDA SDPA probe。它不实现自定义 CUDA kernel，而是在相同 Q/K/V shape 下强制选择 `math`、`flash`、`mem_efficient` 后端，记录 P50/P95 latency、峰值显存、数值误差和 backend 可用性。
+为了补充 GPU 底层视角，项目提供一个小型 PyTorch CUDA SDPA probe。它不实现自定义 CUDA kernel，而是在相同 Q/K/V shape 下强制选择 `math` 与 `flash` 后端，记录 P50/P95 latency、峰值显存、数值误差和 backend 可用性。
 
 ```bash
 make attention-kernel-probe
 ```
 
 这部分用于连接 serving 指标和底层执行：TPOT、吞吐与 decode/prefill 计算路径相关，而 attention kernel 是否融合、是否避免 materialize 完整 attention matrix、是否减少 HBM traffic，都会影响实际性能。详细解释见 [`docs/gpu_operator_notes.md`](docs/gpu_operator_notes.md)。
+
+### Prefill/Decode Disaggregation Study
+
+为了覆盖真实推理平台常见的扩展方向，项目补充了 PD 分离设计说明。它解释 prefill 与 decode 的资源特征差异、KV transfer 为什么是核心难点，以及它和 Scheduler、Prefix Cache、PagedAttention-style block 管理的关系。当前仓库不实现多节点 PD serving；该部分作为面试扩展边界和后续路线，见 [`docs/pd_disaggregation.md`](docs/pd_disaggregation.md)。
 
 ### Prefix Cache A/B
 
@@ -342,6 +346,7 @@ physical block pool:     [3] ... [17] ... [42]
 - Chunked Prefill 已接入统一 token budget，但没有 vLLM 的 preemption、encoder budget、spec decode 和 cudagraph 约束。
 - HF baseline 是本地框架推理，`concurrency` 表示 batch size；vLLM benchmark 是真实 streaming 服务，两者用于理解 serving trade-off，不是完全同构的网络服务 A/B。
 - Attention Kernel Probe 使用 PyTorch SDPA 后端选择，不是自研 CUDA kernel 或完整 FlashAttention 实现。
+- PD 分离目前是架构学习文档，没有实现独立 prefill/decode worker、KV transfer connector、prefix-aware routing 或多节点容错。
 - ONNX / TensorRT 示例是简化模型，不等价于完整 LLM 图优化。
 - 单机单进程，没有 tensor parallel、pipeline parallel、data parallel 或多节点容错。
 - `reports/benchmark_suite` 的数据是机制回归基线；真实 GPU 结论必须重新压测。
@@ -389,8 +394,9 @@ docker compose up --build -d
 
 ```text
 app/                    FastAPI、指标与 vLLM OpenAI client
-attention/              标准 Attention / FlashAttention 教学实现
+attention/              早期 Attention 教学示例；真实性能证据见 scripts/attention_kernel_probe.py
 benchmarks/             单命令 benchmark suite 与指标工具
+docs/                   架构说明、面试边界与扩展设计
 engine/                 SchedulerOutput、Worker、ModelRunner、Attention Backend、KV Cache
 experiments/            可单独运行的扩展实验
 monitoring/             Prometheus / Grafana 配置

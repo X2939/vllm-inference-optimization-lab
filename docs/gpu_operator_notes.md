@@ -24,7 +24,6 @@ custom CUDA kernels.
 
 - `math`: conservative reference path.
 - `flash`: fused FlashAttention-style SDPA backend when available.
-- `mem_efficient`: memory-efficient fused backend when available.
 
 It sweeps sequence length and records:
 
@@ -47,10 +46,10 @@ This is not a claim that the project implements a custom FlashAttention CUDA
 kernel. The correct statement is:
 
 > I added a PyTorch CUDA SDPA backend probe to connect serving metrics with
-> lower-level attention execution. It compares math, flash and memory-efficient
-> SDPA paths on the same Q/K/V shapes, records latency, peak memory and numerical
-> difference, and helps explain why attention kernel choice affects TPOT and
-> throughput.
+> lower-level attention execution. It compares the reference math path with the
+> FlashAttention-style fused path on the same Q/K/V shapes, records latency,
+> peak memory and numerical difference, and helps explain why attention kernel
+> choice affects TPOT and throughput.
 
 This is enough to show bottom-layer awareness without overstating kernel
 engineering experience.
